@@ -1,14 +1,11 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { 
-  LayoutDashboard, 
   FileText, 
-  CheckSquare, 
   Bot, 
   Settings, 
   Menu,
   BookOpen,
-  PieChart,
   Bell
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,12 +17,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const navItems = [
-    { label: "Dashboard", icon: LayoutDashboard, href: "/" },
     { label: "Intake Findings", icon: FileText, href: "/intake" },
-    { label: "Review Queue", icon: CheckSquare, href: "/review" },
     { label: "Clause Library", icon: BookOpen, href: "/clauses" },
     { label: "RAG Assistant", icon: Bot, href: "/assistant" },
-    { label: "Reports", icon: PieChart, href: "/reports" },
   ];
 
   return (
@@ -105,7 +99,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                <Menu className="h-5 w-5" />
              </Button>
              <h1 className="text-lg font-semibold text-foreground hidden md:block">
-               {navItems.find(i => i.href === location)?.label || 'Dashboard'}
+               {navItems.find((i) => i.href === location)?.label || "Intake Findings"}
              </h1>
           </div>
 

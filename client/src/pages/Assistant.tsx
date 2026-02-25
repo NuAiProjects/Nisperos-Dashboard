@@ -1,67 +1,78 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Bot, Send, Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, ExternalLink } from "lucide-react";
+import type { AssistantCitation } from "@shared/schema";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { 
-  Bot, 
-  Send, 
-  Sparkles, 
-  BookOpen, 
-  ThumbsUp, 
-  ThumbsDown, 
-  Copy,
-  ExternalLink
-} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { askAssistant } from "@/lib/model-api";
 
 type Message = {
   id: string;
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
-  citations?: { title: string; clause: string }[];
+  citations?: AssistantCitation[];
 };
 
 export default function Assistant() {
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: '1',
-      role: 'assistant',
-      content: 'Hello! I am your AI Auditor Assistant. I have access to the full ISO 9001:2015 library and your internal quality manual. How can I help you today?'
-    }
+      id: "1",
+      role: "assistant",
+      content:
+        "Hello. I am your auditor assistant. This chat is now connected to /api/assistant/ask and can switch to real-model backend later.",
+    },
   ]);
   const [isTyping, setIsTyping] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const handleSend = () => {
-    if (!query.trim()) return;
+  const handleSend = async (preset?: string) => {
+    const finalQuery = (preset ?? query).trim();
+    if (!finalQuery) return;
 
-    const newMsg: Message = { id: Date.now().toString(), role: 'user', content: query };
-    setMessages(prev => [...prev, newMsg]);
+    setMessages((prev) => [
+      ...prev,
+      { id: Date.now().toString(), role: "user", content: finalQuery },
+    ]);
     setQuery("");
+    setErrorMessage(null);
     setIsTyping(true);
 
-    // Simulate RAG response
-    setTimeout(() => {
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: "According to ISO 9001:2015, organizations must determine the necessary competence of person(s) doing work under its control that affects the performance and effectiveness of the quality management system. Specifically, you need to retain documented information as evidence of competence.",
-        citations: [
-          { title: "Competence", clause: "7.2" },
-          { title: "Documented Information", clause: "7.5" }
-        ]
-      }]);
+    try {
+      const response = await askAssistant({ query: finalQuery });
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: response.answer,
+          citations: response.citations,
+        },
+      ]);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Assistant request failed.";
+      setErrorMessage(message);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content:
+            "Assistant service is unavailable right now. You can continue drafting queries and retry.",
+        },
+      ]);
+    } finally {
       setIsTyping(false);
-    }, 2000);
+    }
   };
 
   return (
     <div className="h-[calc(100vh-8rem)] grid grid-cols-1 lg:grid-cols-4 gap-6">
-      {/* Main Chat Area */}
       <div className="lg:col-span-3 flex flex-col h-full rounded-xl border bg-card shadow-sm overflow-hidden">
         <div className="p-4 border-b bg-muted/20 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -70,7 +81,9 @@ export default function Assistant() {
             </div>
             <div>
               <h3 className="font-semibold text-sm">RAG Assistant</h3>
-              <p className="text-xs text-muted-foreground">Powered by Claude 3.5 Sonnet & Nisperos Clause Library</p>
+              <p className="text-xs text-muted-foreground">
+                Model-ready API contract with mock provider fallback
+              </p>
             </div>
           </div>
           <Button variant="ghost" size="icon">
@@ -81,57 +94,83 @@ export default function Assistant() {
         <ScrollArea className="flex-1 p-4 space-y-6">
           <div className="flex flex-col gap-6 max-w-3xl mx-auto">
             {messages.map((msg) => (
-              <div 
-                key={msg.id} 
+              <div
+                key={msg.id}
                 className={cn(
                   "flex gap-4 w-full max-w-2xl",
-                  msg.role === 'user' ? "ml-auto flex-row-reverse" : ""
+                  msg.role === "user" ? "ml-auto flex-row-reverse" : "",
                 )}
               >
-                <Avatar className={cn(
-                  "h-8 w-8",
-                  msg.role === 'assistant' ? "bg-indigo-100 text-indigo-700 border-indigo-200" : "bg-slate-100 text-slate-700"
-                )}>
-                  {msg.role === 'assistant' ? (
+                <Avatar
+                  className={cn(
+                    "h-8 w-8",
+                    msg.role === "assistant"
+                      ? "bg-indigo-100 text-indigo-700 border-indigo-200"
+                      : "bg-slate-100 text-slate-700",
+                  )}
+                >
+                  {msg.role === "assistant" ? (
                     <Bot className="h-5 w-5 p-0.5" />
                   ) : (
                     <AvatarFallback>JD</AvatarFallback>
                   )}
                 </Avatar>
 
-                <div className={cn(
-                  "flex flex-col gap-2",
-                  msg.role === 'user' ? "items-end" : "items-start"
-                )}>
-                  <div className={cn(
-                    "p-4 rounded-2xl text-sm shadow-sm",
-                    msg.role === 'user' 
-                      ? "bg-primary text-primary-foreground rounded-br-none" 
-                      : "bg-muted/50 border rounded-bl-none"
-                  )}>
+                <div
+                  className={cn(
+                    "flex flex-col gap-2",
+                    msg.role === "user" ? "items-end" : "items-start",
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "p-4 rounded-2xl text-sm shadow-sm",
+                      msg.role === "user"
+                        ? "bg-primary text-primary-foreground rounded-br-none"
+                        : "bg-muted/50 border rounded-bl-none",
+                    )}
+                  >
                     {msg.content}
                   </div>
-                  
+
                   {msg.citations && (
                     <div className="flex flex-wrap gap-2 mt-1">
                       {msg.citations.map((cite, i) => (
-                        <Badge key={i} variant="outline" className="bg-background hover:bg-accent cursor-pointer gap-1 pl-1 pr-2 py-1 text-xs">
-                           <div className="bg-indigo-100 text-indigo-700 px-1.5 rounded text-[10px] font-bold">
-                             {cite.clause}
-                           </div>
-                           {cite.title}
-                           <ExternalLink className="h-3 w-3 ml-1 opacity-50" />
+                        <Badge
+                          key={`${cite.clauseId}-${i}`}
+                          variant="outline"
+                          className="bg-background hover:bg-accent cursor-pointer gap-1 pl-1 pr-2 py-1 text-xs"
+                        >
+                          <div className="bg-indigo-100 text-indigo-700 px-1.5 rounded text-[10px] font-bold">
+                            {cite.clauseId}
+                          </div>
+                          {cite.title}
+                          <ExternalLink className="h-3 w-3 ml-1 opacity-50" />
                         </Badge>
                       ))}
                     </div>
                   )}
 
-                  {msg.role === 'assistant' && (
+                  {msg.citations && (
+                    <p className="text-[11px] text-muted-foreground max-w-lg">
+                      {msg.citations[0]?.snippet}
+                    </p>
+                  )}
+
+                  {msg.role === "assistant" && (
                     <div className="flex items-center gap-2 mt-1">
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-green-600">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-green-600"
+                      >
                         <ThumbsUp className="h-3 w-3" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-600">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground hover:text-red-600"
+                      >
                         <ThumbsDown className="h-3 w-3" />
                       </Button>
                       <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground">
@@ -148,9 +187,18 @@ export default function Assistant() {
                   <Bot className="h-5 w-5 p-0.5" />
                 </Avatar>
                 <div className="bg-muted/50 border rounded-2xl rounded-bl-none p-4 flex items-center gap-2">
-                  <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  <div
+                    className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"
+                    style={{ animationDelay: "0ms" }}
+                  />
+                  <div
+                    className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"
+                    style={{ animationDelay: "150ms" }}
+                  />
+                  <div
+                    className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"
+                    style={{ animationDelay: "300ms" }}
+                  />
                 </div>
               </div>
             )}
@@ -159,33 +207,36 @@ export default function Assistant() {
 
         <div className="p-4 border-t bg-background">
           <div className="max-w-3xl mx-auto relative">
-             <Input 
-               className="pr-24 pl-4 h-12 rounded-full shadow-sm border-muted-foreground/20 focus-visible:ring-indigo-500"
-               placeholder="Ask about ISO clauses, specific findings, or procedures..." 
-               value={query}
-               onChange={(e) => setQuery(e.target.value)}
-               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-             />
-             <div className="absolute right-1 top-1 flex items-center gap-1">
-               <Button size="icon" variant="ghost" className="rounded-full text-muted-foreground">
-                  <Sparkles className="h-4 w-4" />
-               </Button>
-               <Button 
-                 size="icon" 
-                 className="rounded-full bg-indigo-600 hover:bg-indigo-700 text-white h-10 w-10 shadow-sm"
-                 onClick={handleSend}
-               >
-                  <Send className="h-4 w-4" />
-               </Button>
-             </div>
+            <Input
+              className="pr-24 pl-4 h-12 rounded-full shadow-sm border-muted-foreground/20 focus-visible:ring-indigo-500"
+              placeholder="Ask about clauses, finding classification, or audit guidance..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+            />
+            <div className="absolute right-1 top-1 flex items-center gap-1">
+              <Button size="icon" variant="ghost" className="rounded-full text-muted-foreground">
+                <Sparkles className="h-4 w-4" />
+              </Button>
+              <Button
+                size="icon"
+                className="rounded-full bg-indigo-600 hover:bg-indigo-700 text-white h-10 w-10 shadow-sm"
+                onClick={() => handleSend()}
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
-          <p className="text-center text-[10px] text-muted-foreground mt-3">
-            AI can make mistakes. Verify critical compliance information against the official standard.
-          </p>
+          {errorMessage ? (
+            <p className="text-center text-[10px] text-red-600 mt-3">{errorMessage}</p>
+          ) : (
+            <p className="text-center text-[10px] text-muted-foreground mt-3">
+              Validate critical compliance decisions against your official standard and internal policy.
+            </p>
+          )}
         </div>
       </div>
 
-      {/* Sidebar Suggestions */}
       <div className="hidden lg:flex flex-col gap-6">
         <Card>
           <CardHeader>
@@ -196,15 +247,15 @@ export default function Assistant() {
               "What is the difference between NC and OFI?",
               "Summarize the requirements for Clause 9.3",
               "How should we document non-conforming outputs?",
-              "Draft a corrective action plan template"
+              "Draft a corrective action plan template",
             ].map((q, i) => (
-              <Button 
-                key={i} 
-                variant="outline" 
+              <Button
+                key={i}
+                variant="outline"
                 className="justify-start text-xs h-auto py-3 whitespace-normal text-left"
                 onClick={() => {
                   setQuery(q);
-                  // Optional: auto send
+                  void handleSend(q);
                 }}
               >
                 <Sparkles className="h-3 w-3 mr-2 shrink-0 text-indigo-500" />
@@ -218,32 +269,16 @@ export default function Assistant() {
           <CardHeader>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <BookOpen className="h-4 w-4 text-indigo-600" />
-              Clause Reference
+              Integration Notes
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4 text-sm">
-              <div>
-                <h4 className="font-semibold mb-1 text-indigo-900 dark:text-indigo-300">ISO 9001:2015 Structure</h4>
-                <ul className="space-y-2 text-muted-foreground">
-                  <li className="flex items-center gap-2">
-                    <span className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono font-bold">4.0</span> Context
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono font-bold">5.0</span> Leadership
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono font-bold">6.0</span> Planning
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono font-bold">7.0</span> Support
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono font-bold">8.0</span> Operation
-                  </li>
-                </ul>
-              </div>
-            </div>
+            <ul className="space-y-2 text-sm text-muted-foreground">
+              <li>Endpoint: `POST /api/assistant/ask`</li>
+              <li>Current provider mode: mock</li>
+              <li>Switch to real model by implementing external provider internals</li>
+              <li>Citations and guidance schema are already enforced</li>
+            </ul>
           </CardContent>
         </Card>
       </div>
