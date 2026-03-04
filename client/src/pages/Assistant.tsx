@@ -275,7 +275,7 @@ export default function Assistant() {
           <CardContent>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>Endpoint: `POST /api/assistant/ask`</li>
-              <li>Provider mode: `external` when `RAG/qa.py` is present (or set `MODEL_PROVIDER` manually)</li>
+              <li>Provider mode: `remote` for private inference service, `external` for local Python scripts</li>
               <li>Assistant answers are grounded on retrieved RAG evidence chunks</li>
               <li>Citations and guidance schema remain enforced</li>
             </ul>

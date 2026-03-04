@@ -47,6 +47,9 @@ type BertPredictResponse = {
 
 const DEFAULT_RAG_TIMEOUT_MS = 120_000;
 const DEFAULT_BERT_TIMEOUT_MS = 120_000;
+const DEFAULT_REMOTE_TIMEOUT_MS = 120_000;
+const REMOTE_BERT_PATH = "/bert/predict";
+const REMOTE_RAG_PATH = "/rag/qa";
 
 function resolveRagPaths() {
   const ragDir = process.env.RAG_DIR
@@ -490,6 +493,91 @@ function runBertPredict(findingText: string, bertDir: string): Promise<BertPredi
   });
 }
 
+function resolveRemoteModelBaseUrl(): string {
+  const baseUrl = process.env.REMOTE_MODEL_URL?.trim();
+  if (!baseUrl) {
+    throw new Error(
+      "REMOTE_MODEL_URL is required when MODEL_PROVIDER=remote. Example: http://nisperos-inference:10000",
+    );
+  }
+
+  return baseUrl.replace(/\/+$/, "");
+}
+
+async function postRemoteJson(pathname: string, payload: Record<string, unknown>, timeoutMs: number): Promise<string> {
+  const baseUrl = resolveRemoteModelBaseUrl();
+  const endpoint = `${baseUrl}${pathname}`;
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (process.env.REMOTE_MODEL_API_KEY) {
+    headers["x-model-api-key"] = process.env.REMOTE_MODEL_API_KEY;
+  }
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    if (!response.ok) {
+      const detail = raw.trim() || response.statusText;
+      throw new Error(
+        `Remote model service request failed (${response.status}) at ${pathname}: ${detail.slice(0, 500)}`,
+      );
+    }
+
+    return raw;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Remote model service timed out after ${timeoutMs}ms at ${pathname}.`);
+    }
+
+    throw error instanceof Error ? error : new Error("Remote model request failed.");
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+async function runRemoteRagQa(question: string): Promise<RagQaResponse> {
+  const timeoutMs = Number(
+    process.env.REMOTE_RAG_TIMEOUT_MS ??
+      process.env.RAG_TIMEOUT_MS ??
+      DEFAULT_REMOTE_TIMEOUT_MS,
+  );
+  const payload: Record<string, unknown> = { question };
+  if (process.env.RAG_TOP_K) {
+    payload.top_k = Number(process.env.RAG_TOP_K);
+  }
+  if (process.env.RAG_ST_MODEL) {
+    payload.st_model = process.env.RAG_ST_MODEL;
+  }
+
+  const raw = await postRemoteJson(REMOTE_RAG_PATH, payload, timeoutMs);
+  return parseRagQaResponse(raw);
+}
+
+async function runRemoteBertPredict(findingText: string): Promise<BertPredictResponse> {
+  const timeoutMs = Number(
+    process.env.REMOTE_BERT_TIMEOUT_MS ??
+      process.env.BERT_TIMEOUT_MS ??
+      DEFAULT_REMOTE_TIMEOUT_MS,
+  );
+  const payload: Record<string, unknown> = { text: findingText };
+  if (process.env.BERT_TOP_K) {
+    payload.top_k = Number(process.env.BERT_TOP_K);
+  }
+
+  const raw = await postRemoteJson(REMOTE_BERT_PATH, payload, timeoutMs);
+  return parseBertPredictResponse(raw);
+}
+
 function shouldUseExternalByDefault(): boolean {
   const ragDir = process.env.RAG_DIR
     ? path.resolve(process.cwd(), process.env.RAG_DIR)
@@ -608,11 +696,96 @@ class ExternalModelProvider implements IModelProvider {
   }
 }
 
+class RemoteModelProvider implements IModelProvider {
+  getMetadata(): ModelProviderMetadata {
+    return {
+      name: process.env.MODEL_NAME || "remote-python-rag-bert-provider",
+      mode: "external",
+      modelVersion: process.env.MODEL_VERSION || "remote /bert/predict + /rag/qa",
+    };
+  }
+
+  async analyzeFinding(
+    input: AnalyzeFindingRequest,
+  ): Promise<AnalyzeFindingResponse> {
+    const bertResult = await runRemoteBertPredict(input.findingText);
+    const classification = normalizeClassification(bertResult.classification);
+    const topClauseSuggestions = getTopClauseSuggestions(bertResult.top_clauses);
+    const suggestedClause = topClauseSuggestions[0] ?? {
+      clauseId: "8.7",
+      title: CLAUSE_BY_ID.get("8.7")?.title ?? "Control of nonconforming outputs",
+      probability: 0.5,
+    };
+    const confidence = clampZeroToOne(
+      (clampZeroToOne(bertResult.classification_confidence) + suggestedClause.probability) / 2,
+    );
+
+    const similarFindings =
+      classification === "NC"
+        ? [
+            {
+              id: "REMOTE-NC-001",
+              excerpt: "Remote classifier aligned this text to a requirement gap pattern.",
+              classification: "NC" as const,
+            },
+          ]
+        : [
+            {
+              id: "REMOTE-OFI-001",
+              excerpt: "Remote classifier aligned this text to an improvement-oriented pattern.",
+              classification: "OFI" as const,
+            },
+          ];
+
+    return {
+      classification,
+      confidence,
+      suggestedClause,
+      topClauseSuggestions,
+      rationale: `Remote BERT service predicted ${classification} and mapped the finding to clause ${suggestedClause.clauseId}.`,
+      salientPhrases: getSalientPhrases(input.findingText),
+      similarFindings,
+      provider: this.getMetadata(),
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async askAssistant(input: AssistantAskRequest): Promise<AssistantAskResponse> {
+    const question = input.findingText
+      ? `${input.query}\n\nFinding context:\n${input.findingText}`
+      : input.query;
+
+    const rag = await runRemoteRagQa(question);
+    const citations = rag.reference_source.map((source, index) => ({
+      title: source.doc_title.trim() || `Reference ${index + 1}`,
+      clauseId: source.pages.trim() ? `pp. ${source.pages.trim()}` : `ref-${index + 1}`,
+      snippet: sanitizeSnippet(source.snippet),
+    }));
+
+    const confidence = clampZeroToOne(rag.confidence_score);
+
+    return {
+      answer: rag.response.trim(),
+      citations,
+      guidance: [
+        `RAG confidence score: ${confidence.toFixed(2)}.`,
+        `Retrieved ${citations.length} source chunk${citations.length === 1 ? "" : "s"}.`,
+        "Validate high-stakes decisions against cited documents and official policy.",
+      ],
+      provider: this.getMetadata(),
+      generatedAt: new Date().toISOString(),
+    };
+  }
+}
+
 export function getModelProvider(): IModelProvider {
   const inferredDefaultMode = shouldUseExternalByDefault() ? "external" : "mock";
   const mode = (process.env.MODEL_PROVIDER ?? inferredDefaultMode).toLowerCase();
   if (mode === "external") {
     return new ExternalModelProvider();
+  }
+  if (mode === "remote") {
+    return new RemoteModelProvider();
   }
 
   return new MockModelProvider();
