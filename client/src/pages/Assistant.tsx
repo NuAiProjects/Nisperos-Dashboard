@@ -24,7 +24,7 @@ export default function Assistant() {
       id: "1",
       role: "assistant",
       content:
-        "Hello. I am your auditor assistant. This chat is now connected to /api/assistant/ask and can switch to real-model backend later.",
+        "Hello. I am your auditor assistant. This chat is connected to /api/assistant/ask and can run the local RAG backend when available.",
     },
   ]);
   const [isTyping, setIsTyping] = useState(false);
@@ -82,7 +82,7 @@ export default function Assistant() {
             <div>
               <h3 className="font-semibold text-sm">RAG Assistant</h3>
               <p className="text-xs text-muted-foreground">
-                Model-ready API contract with mock provider fallback
+                Live assistant endpoint with RAG-backed retrieval support
               </p>
             </div>
           </div>
@@ -275,9 +275,9 @@ export default function Assistant() {
           <CardContent>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>Endpoint: `POST /api/assistant/ask`</li>
-              <li>Current provider mode: mock</li>
-              <li>Switch to real model by implementing external provider internals</li>
-              <li>Citations and guidance schema are already enforced</li>
+              <li>Provider mode: `external` when `RAG/qa.py` is present (or set `MODEL_PROVIDER` manually)</li>
+              <li>Assistant answers are grounded on retrieved RAG evidence chunks</li>
+              <li>Citations and guidance schema remain enforced</li>
             </ul>
           </CardContent>
         </Card>

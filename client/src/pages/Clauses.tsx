@@ -1,19 +1,54 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ClauseItem, ClauseSection } from "@shared/schema";
-import { Search, ChevronRight, BookOpen, FileText, ChevronDown } from "lucide-react";
+import type { AnalyzeFindingResponse, ClauseItem, ClauseSection } from "@shared/schema";
+import { Search, ChevronRight, BookOpen, FileText, ChevronDown, Sparkles } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { getClauseLibrary } from "@/lib/model-api";
+import { analyzeFinding, getClauseLibrary } from "@/lib/model-api";
+
+function classificationLabel(classification: AnalyzeFindingResponse["classification"]): string {
+  return classification === "NC" ? "Non-Conformity (NC)" : "Opportunity for Improvement (OFI)";
+}
+
+function findClauseByIdOrPrefix(
+  sections: ClauseSection[],
+  clauseId: string,
+): { sectionId: string; clause: ClauseItem } | null {
+  for (const section of sections) {
+    const exact = section.subclauses.find((subclause) => subclause.id === clauseId);
+    if (exact) {
+      return { sectionId: section.id, clause: exact };
+    }
+  }
+
+  const parts = clauseId.split(".");
+  while (parts.length > 1) {
+    parts.pop();
+    const prefix = parts.join(".");
+    for (const section of sections) {
+      const candidate = section.subclauses.find((subclause) => subclause.id === prefix);
+      if (candidate) {
+        return { sectionId: section.id, clause: candidate };
+      }
+    }
+  }
+
+  return null;
+}
 
 export default function Clauses() {
   const [search, setSearch] = useState("");
   const [selectedClause, setSelectedClause] = useState<ClauseItem | null>(null);
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const [findingDraft, setFindingDraft] = useState("");
+  const [analysisResult, setAnalysisResult] = useState<AnalyzeFindingResponse | null>(null);
+  const [isClassifying, setIsClassifying] = useState(false);
+  const [classifyError, setClassifyError] = useState<string | null>(null);
 
   const clauseQuery = useQuery({
     queryKey: ["clauses-library"],
@@ -56,6 +91,33 @@ export default function Clauses() {
       })
       .filter((section) => section.subclauses.length > 0) as ClauseSection[];
   }, [sections, search]);
+
+  const handleClassifyFinding = async () => {
+    const findingText = findingDraft.trim();
+    if (!findingText) return;
+
+    setIsClassifying(true);
+    setClassifyError(null);
+
+    try {
+      const response = await analyzeFinding({
+        findingText,
+        evidenceRefs: [],
+      });
+      setAnalysisResult(response);
+
+      const match = findClauseByIdOrPrefix(sections, response.suggestedClause.clauseId);
+      if (match) {
+        setSelectedClause(match.clause);
+        setExpandedSection(match.sectionId);
+      }
+    } catch (error) {
+      setClassifyError(error instanceof Error ? error.message : "Failed to classify finding.");
+      setAnalysisResult(null);
+    } finally {
+      setIsClassifying(false);
+    }
+  };
 
   if (clauseQuery.isLoading) {
     return (
@@ -155,6 +217,84 @@ export default function Clauses() {
         <ScrollArea className="flex-1 p-6">
           <div className="max-w-3xl space-y-8">
             <div className="prose dark:prose-invert max-w-none">
+              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-primary" />
+                Clause Classifier
+              </h3>
+              <div className="rounded-xl border p-4 bg-muted/20 not-prose space-y-3">
+                <Textarea
+                  className="min-h-28"
+                  placeholder="Paste an audit finding, then run the BERT classifier to map it to the closest clause."
+                  value={findingDraft}
+                  onChange={(e) => setFindingDraft(e.target.value)}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    onClick={handleClassifyFinding}
+                    disabled={!findingDraft.trim() || isClassifying}
+                    className="gap-2"
+                  >
+                    <Sparkles className={cn("h-4 w-4", isClassifying ? "animate-spin" : "")} />
+                    {isClassifying ? "Classifying..." : "Classify Finding"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setFindingDraft("");
+                      setAnalysisResult(null);
+                      setClassifyError(null);
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+
+                {classifyError && (
+                  <p className="text-sm text-red-600">{classifyError}</p>
+                )}
+
+                {analysisResult && (
+                  <div className="space-y-3 text-sm">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline" className="bg-primary/10 border-primary/20 text-primary">
+                        {classificationLabel(analysisResult.classification)}
+                      </Badge>
+                      <Badge variant="outline">
+                        Confidence: {Math.round(analysisResult.confidence * 100)}%
+                      </Badge>
+                      <Badge variant="outline">{analysisResult.provider.name}</Badge>
+                    </div>
+                    <p className="text-muted-foreground">{analysisResult.rationale}</p>
+                    <div className="space-y-2">
+                      {analysisResult.topClauseSuggestions.slice(0, 3).map((suggestion) => (
+                        <button
+                          key={suggestion.clauseId}
+                          type="button"
+                          className="w-full text-left border rounded-md px-3 py-2 hover:bg-background transition-colors"
+                          onClick={() => {
+                            const match = findClauseByIdOrPrefix(sections, suggestion.clauseId);
+                            if (match) {
+                              setSelectedClause(match.clause);
+                              setExpandedSection(match.sectionId);
+                            }
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="font-medium">
+                              {suggestion.clauseId} {suggestion.title}
+                            </span>
+                            <Badge variant="outline">
+                              {Math.round(suggestion.probability * 100)}%
+                            </Badge>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
                 <BookOpen className="h-5 w-5 text-primary" />
                 Requirement

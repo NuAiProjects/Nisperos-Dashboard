@@ -3,4 +3,8 @@ dist
 .DS_Store
 server/public
 vite.config.ts.*
-*.tar.gz
+*.tar.gzRAG/.venv/
+RAG/refs/
+RAG/rag_data/
+BERT/**/model.safetensors
+*.safetensors
